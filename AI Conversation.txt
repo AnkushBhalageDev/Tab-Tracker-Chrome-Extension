@@ -1,0 +1,1072 @@
+I want you to create a complete Chrome extension (Manifest V3) that tracks my tab usage in Google Chrome. The extension should:
+Count how many tabs are opened and closed in a day.
+Identify which tabs are currently active.
+Track how much time I spend on each tab.
+Maintain a ranking of tabs based on time spent (most time first, least time last).
+The output should include:
+The complete manifest.json file.
+Background service worker code to handle tab and activity tracking.
+Any necessary content scripts.
+A new tab should get opened to display the statistics in a user-friendly format.
+Explanation of how to install and test the extension locally in Chrome.
+According to is this best prompt
+provide me all of this in react js (node -v v22.14.0, npm -v 10.9.2)
+
+
+
+ThinkingThoughts
+(experimental)
+
+Expand to view model thoughts
+
+chevron_right
+Of course! Here is a complete guide to creating a Chrome extension with Manifest V3 and React that tracks your tab usage.
+This powerful extension will provide you with valuable insights into your browsing habits, helping you understand and manage your productivity.
+Project Structure
+First, let's set up the project. We will use create-react-app to scaffold our React application, which will serve as the user interface for our extension.
+Create the React App:
+Open your terminal and run the following commands. This will create a new React project and navigate into the project directory.
+code
+Bash
+npx create-react-app tab-tracker-extension
+cd tab-tracker-extension
+Project Folder Overview:
+After creation, your project structure will be a standard React app. We will place the extension-specific files in the public folder and build our user interface in the src folder.
+code
+Code
+tab-tracker-extension/
+├── node_modules/
+├── public/
+│   ├── index.html
+│   ├── manifest.json  <-- We will create this
+│   └── background.js    <-- We will create this
+├── src/
+│   ├── App.css
+│   ├── App.js
+│   └── index.js
+└── package.json
+1. The Manifest File (manifest.json)
+This is the most important file for a Chrome extension. It defines the extension's properties, permissions, and the files it uses.
+Create a file named manifest.json inside the public/ directory and add the following code.
+public/manifest.json
+code
+JSON
+{
+  "manifest_version": 3,
+  "name": "Tab Usage Tracker",
+  "version": "1.0",
+  "description": "An extension to track your daily tab usage and time spent.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "idle"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "chrome_url_overrides": {
+    "newtab": "index.html"
+  },
+  "icons": {
+    "16": "logo192.png",
+    "48": "logo192.png",
+    "128": "logo192.png"
+  }
+}
+Explanation of Manifest Properties:
+"manifest_version": 3: Specifies that we are using the latest Manifest V3, which is required for modern Chrome extensions.[1][2]
+"name", "version", "description": Basic information about your extension.
+"permissions": This is a crucial section that declares what your extension needs to access.[3]
+"storage": Allows the extension to use the chrome.storage API to save and retrieve tracking data.[4][5]
+"tabs": Grants access to the chrome.tabs API, which is essential for getting information about open tabs, and for tracking when tabs are created, closed, or activated.[6]
+"idle": Lets the extension detect when the user's system is idle, allowing for more accurate time tracking.
+"background": Defines the background service worker.[7]
+"service_worker": "background.js": Points to our main tracking script. In Manifest V3, this replaces persistent background pages.[2]
+"chrome_url_overrides": This powerful feature allows the extension to replace a default Chrome page.
+"newtab": "index.html": Specifies that when a new tab is opened, it should load our index.html file, which is the entry point for our React application.[8][9]
+"icons": Defines the icons for the extension to be displayed in the extensions management page and toolbar.
+2. Background Service Worker (background.js)
+The service worker is the brain of our extension. It runs in the background, listening for browser events like tab creation, activation, and removal. It handles all the logic for tracking usage and time.
+Create a file named background.js inside the public/ directory and add the following code.
+public/background.js```javascript
+let activeTabId = null;
+let startTime = null;
+let isIdle = false;
+// Function to get today's date in YYYY-MM-DD format
+const getToday = () => new Date().toISOString().split('T')[0];
+// Initializes or retrieves data for the current day
+const initializeDayData = async () => {
+const today = getToday();
+const data = await chrome.storage.local.get(today);
+if (!data[today]) {
+await chrome.storage.local.set({
+[today]: {
+tabsOpened: 0,
+tabsClosed: 0,
+tabData: {},
+},
+});
+}
+return data[today] || { tabsOpened: 0, tabsClosed: 0, tabData: {} };
+};
+// Updates the time spent on the previously active tab
+const updateTimeSpent = async () => {
+if (activeTabId === null || startTime === null || isIdle) {
+return;
+}
+const today = getToday();
+const data = await chrome.storage.local.get(today);
+const dayData = data[today];
+if (dayData && dayData.tabData[activeTabId]) {
+const timeSpent = Date.now() - startTime;
+dayData.tabData[activeTabId].timeSpent += timeSpent;
+await chrome.storage.local.set({ [today]: dayData });
+}
+startTime = Date.now(); // Reset start time for the new active tab
+};
+// --- Event Listeners ---
+// On Extension Install/Update
+chrome.runtime.onInstalled.addListener(() => {
+console.log("Tab Tracker Extension Installed.");
+initializeDayData();
+});
+// On Tab Created
+chrome.tabs.onCreated.addListener(async (tab) => {
+const today = getToday();
+const data = await chrome.storage.local.get(today);
+const dayData = data[today] || await initializeDayData();
+dayData.tabsOpened += 1;
+await chrome.storage.local.set({ [today]: dayData });
+});
+// On Tab Removed
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+await updateTimeSpent(); // Update time before processing removal
+const today = getToday();
+const data = await chrome.storage.local.get(today);
+const dayData = data[today] || await initializeDayData();
+dayData.tabsClosed += 1;
+// If the closed tab was being tracked, remove it from active tracking
+if (dayData.tabData[tabId]) {
+// Optionally, you can keep the data for historical ranking
+// delete dayData.tabData[tabId];
+}
+await chrome.storage.local.set({ [today]: dayData });
+if (activeTabId === tabId) {
+activeTabId = null;
+startTime = null;
+}
+});
+// On Tab Activated
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+await updateTimeSpent();
+activeTabId = activeInfo.tabId;
+startTime = Date.now();
+const tab = await chrome.tabs.get(activeTabId);
+// Do not track chrome:// or other special pages
+if (tab.url && tab.url.startsWith('http')) {
+const today = getToday();
+const data = await chrome.storage.local.get(today);
+const dayData = data[today] || await initializeDayData();
+code
+Code
+if (!dayData.tabData[activeTabId]) {
+  dayData.tabData[activeTabId] = {
+    url: tab.url,
+    title: tab.title,
+    timeSpent: 0,
+  };
+  await chrome.storage.local.set({ [today]: dayData });
+}
+} else {
+activeTabId = null; // Don't track non-http pages
+startTime = null;
+}
+});
+// On Tab Updated (e.g., URL change)
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+if (tabId === activeTabId && changeInfo.url) {
+await updateTimeSpent();
+const today = getToday();
+const data = await chrome.storage.local.get(today);
+const dayData = data[today];
+if (dayData.tabData[tabId]) {
+dayData.tabData[tabId].url = tab.url;
+dayData.tabData[tabId].title = tab.title;
+await chrome.storage.local.set({ [today]: dayData });
+}
+}
+});
+// On Window Focus Changed
+chrome.windows.onFocusChanged.addListener(async (windowId) => {
+if (windowId === chrome.windows.WINDOW_ID_NONE) {
+// All Chrome windows lost focus
+await updateTimeSpent();
+activeTabId = null;
+} else {
+// A Chrome window gained focus, find its active tab
+const [tab] = await chrome.tabs.query({ active: true, windowId: windowId });
+if (tab) {
+// This triggers the onActivated listener, so no need for duplicate logic
+}
+}
+});
+// On Idle State Changed
+chrome.idle.onStateChanged.addListener(async (newState) => {
+if (newState === "active") {
+isIdle = false;
+// User is active again, restart timer for the current tab
+startTime = Date.now();
+} else {
+// User is idle or locked
+isIdle = true;
+await updateTimeSpent();
+}
+});
+code
+Code
+---
+
+### **3. Content Scripts**
+
+For the functionality described (tracking tab counts, active tab, and time spent), a content script is **not required**. All necessary data can be gathered by the background service worker using the `chrome.tabs` and `chrome.idle` APIs.
+
+---
+
+### **4. React App for Displaying Statistics**
+
+This is the user-facing part of our extension. It will be displayed every time you open a new tab. It reads the data saved by our background script and presents it in a clear and organized way.
+
+First, let's style our application.
+
+**`src/App.css`**
+```css
+body {
+  background-color: #f0f2f5;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  color: #1c1e21;
+  margin: 0;
+  padding: 20px;
+}
+
+.App {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.header {
+  border-bottom: 1px solid #dddfe2;
+  padding-bottom: 15px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header h1 {
+  font-size: 24px;
+  color: #050505;
+  margin: 0;
+}
+
+.header p {
+    font-size: 14px;
+    color: #606770;
+    margin: 0;
+}
+
+.stats-container {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.stat-box {
+  background-color: #e7f3ff;
+  border-radius: 8px;
+  padding: 20px;
+  flex-grow: 1;
+  text-align: center;
+}
+
+.stat-box h2 {
+  margin: 0 0 10px 0;
+  font-size: 18px;
+  color: #1877f2;
+}
+
+.stat-box p {
+  margin: 0;
+  font-size: 32px;
+  font-weight: bold;
+  color: #050505;
+}
+
+.tab-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.tab-list-header {
+    font-size: 20px;
+    font-weight: bold;
+    margin-top: 30px;
+    margin-bottom: 15px;
+}
+
+.tab-item {
+  display: flex;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid #dddfe2;
+}
+
+.tab-item:last-child {
+  border-bottom: none;
+}
+
+.tab-rank {
+    font-size: 16px;
+    font-weight: bold;
+    color: #606770;
+    margin-right: 15px;
+    min-width: 20px;
+    text-align: center;
+}
+
+.tab-info {
+  flex-grow: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-info a {
+  font-weight: 500;
+  color: #050505;
+  text-decoration: none;
+  display: block;
+}
+
+.tab-info a:hover {
+  text-decoration: underline;
+}
+
+.tab-info small {
+  color: #606770;
+}
+
+.tab-time {
+  font-size: 16px;
+  font-weight: bold;
+  color: #1877f2;
+}
+Now, let's modify the main React component to fetch and display the data.
+src/App.js
+code
+JavaScript
+/*global chrome*/
+import React, { useState, useEffect } from 'react';
+import './App.css';
+
+function App() {
+  const [stats, setStats] = useState({
+    tabsOpened: 0,
+    tabsClosed: 0,
+  });
+  const [rankedTabs, setRankedTabs] = useState([]);
+  const [activeTabs, setActiveTabs] = useState([]);
+
+  const getToday = () => new Date().toISOString().split('T')[0];
+
+  const formatTime = (ms) => {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (hours > 0) return `${hours}h ${minutes % 60}m`;
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+    return `${seconds}s`;
+  };
+  
+  useEffect(() => {
+    const today = getToday();
+
+    // Fetch stored data
+    chrome.storage.local.get(today, (result) => {
+      const dayData = result[today];
+      if (dayData) {
+        setStats({
+          tabsOpened: dayData.tabsOpened,
+          tabsClosed: dayData.tabsClosed,
+        });
+
+        const sortedTabs = Object.values(dayData.tabData)
+          .filter(tab => tab.timeSpent > 0)
+          .sort((a, b) => b.timeSpent - a.timeSpent);
+        
+        setRankedTabs(sortedTabs);
+      }
+    });
+    
+    // Fetch currently active tabs
+    chrome.tabs.query({}, (tabs) => {
+      setActiveTabs(tabs);
+    });
+
+  }, []);
+
+  return (
+    <div className="App">
+      <div className="header">
+        <h1>Tab Usage Dashboard</h1>
+        <p>{new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+      </div>
+
+      <div className="stats-container">
+        <div className="stat-box">
+          <h2>Tabs Opened Today</h2>
+          <p>{stats.tabsOpened}</p>
+        </div>
+        <div className="stat-box">
+          <h2>Tabs Closed Today</h2>
+          <p>{stats.tabsClosed}</p>
+        </div>
+         <div className="stat-box">
+          <h2>Currently Open</h2>
+          <p>{activeTabs.length}</p>
+        </div>
+      </div>
+      
+      <h2 className="tab-list-header">Time Spent Per Tab (Today)</h2>
+      {rankedTabs.length > 0 ? (
+        <ul className="tab-list">
+          {rankedTabs.map((tab, index) => (
+            <li key={index} className="tab-item">
+              <span className="tab-rank">{index + 1}</span>
+              <div className="tab-info">
+                 <a href={tab.url} target="_blank" rel="noopener noreferrer" title={tab.url}>
+                    {tab.title}
+                 </a>
+                 <small>{tab.url}</small>
+              </div>
+              <span className="tab-time">{formatTime(tab.timeSpent)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+         <p>No tab activity tracked yet for today. Start browsing!</p>
+      )}
+
+    </div>
+  );
+}
+
+export default App;
+5. How to Install and Test the Extension
+Now that all the code is in place, you need to build the React app and load it into Chrome.
+Build the React App:
+In your terminal, inside the tab-tracker-extension directory, run the build command:
+code
+Bash
+npm run build
+This will create a build/ directory in your project. This directory contains the optimized, production-ready version of your React app, along with the manifest.json and background.js we placed in the public folder.
+Load the Extension in Chrome:
+Open Google Chrome and navigate to chrome://extensions.
+In the top-right corner, turn on Developer mode.
+[10] * Three new buttons will appear: "Load unpacked", "Pack extension", and "Update".
+Click on Load unpacked.
+[11] * A file dialog will open. Navigate to your tab-tracker-extension project folder and select the build directory.
+Click "Select Folder".
+Testing:
+Your "Tab Usage Tracker" extension should now appear in your list of extensions.
+Open a new tab. You should see your React application's dashboard instead of the default Chrome new tab page.
+Browse the web for a few minutes. Open some new tabs, close some, and switch between them.
+Open another new tab (or refresh your existing dashboard tab) to see the stats update. The "Tabs Opened", "Tabs Closed", and the ranked list of time spent should reflect your activity.
+Leave your computer for a minute to let it become idle, then return. The time tracking should have paused during your idle period.
+Sources
+help
+chrome.com
+css-tricks.com
+dev.to
+chrome.com
+davidwalsh.name
+chrome.com
+exmo.tech
+medium.com
+stackoverflow.com
+r44j.dev
+developerlife.com
+
+
+
+
+
+can we show some data in graphical format also i need time spent in week and month
+
+
+Of course! Let's enhance the extension to include graphical data, weekly and monthly statistics, and aggregate data by domain for a more meaningful overview.
+We will use the popular chart.js library with its React wrapper react-chartjs-2 to create the charts. It's powerful and integrates smoothly with our existing setup.
+1. Install New Dependencies
+First, you need to add the charting libraries to your project. In your terminal, from the tab-tracker-extension directory, run:
+code
+Bash
+npm install chart.js react-chartjs-2```
+
+---
+
+### **2. Updated Background Service Worker (`public/background.js`)**
+
+The background script needs a major upgrade to handle daily, weekly, and monthly data aggregation. We will also start tracking by domain (e.g., "google.com") for the weekly and monthly summaries, as tracking individual tab URLs over long periods is less practical.
+
+**`public/background.js`**
+```javascript
+// --- Utility Functions ---
+
+// Gets a 'YYYY-MM-DD' string for today
+const getToday = () => new Date().toISOString().split('T')[0];
+
+// Gets a 'YYYY-Www' string for the current week (e.g., 2025-W33)
+const getThisWeek = () => {
+  const now = new Date();
+  const firstDayOfYear = new Date(now.getFullYear(), 0, 1);
+  const pastDaysOfYear = (now - firstDayOfYear) / 86400000;
+  const weekNumber = Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+  return `${now.getFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
+};
+
+// Gets a 'YYYY-MM' string for the current month
+const getThisMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
+// Extracts the domain from a URL
+const getDomainFromUrl = (urlString) => {
+  try {
+    const url = new URL(urlString);
+    return url.hostname;
+  } catch (error) {
+    return null; // Invalid URL
+  }
+};
+
+
+// --- Data Initialization and Storage ---
+let activeTabInfo = { id: null, startTime: null, url: null };
+let isIdle = false;
+
+// Universal function to initialize data for a given time period key
+const initializePeriodData = async (key) => {
+  const data = await chrome.storage.local.get(key);
+  if (!data[key]) {
+    const initialData = {
+      tabsOpened: 0,
+      tabsClosed: 0,
+      timeData: {}, // Will store time by tabId for daily, and by domain for weekly/monthly
+    };
+    await chrome.storage.local.set({ [key]: initialData });
+    return initialData;
+  }
+  return data[key];
+};
+
+// Main function to update time spent across all periods
+const updateTimeSpent = async () => {
+  if (!activeTabInfo.id || !activeTabInfo.startTime || isIdle) {
+    return;
+  }
+
+  const timeSpent = Date.now() - activeTabInfo.startTime;
+  if (timeSpent < 100) return; // Ignore very brief intervals
+
+  const domain = getDomainFromUrl(activeTabInfo.url);
+  if (!domain) return; // Don't track time for non-standard URLs
+
+  const todayKey = getToday();
+  const weekKey = getThisWeek();
+  const monthKey = getThisMonth();
+
+  // Get data for all periods
+  const [dailyData, weeklyData, monthlyData] = await Promise.all([
+    initializePeriodData(todayKey),
+    initializePeriodData(weekKey),
+    initializePeriodData(monthKey),
+  ]);
+
+  // Update Daily Data (by specific tab ID and URL)
+  if (!dailyData.timeData[activeTabInfo.id]) {
+    dailyData.timeData[activeTabInfo.id] = { url: activeTabInfo.url, title: 'Loading...', timeSpent: 0 };
+  }
+  dailyData.timeData[activeTabInfo.id].timeSpent += timeSpent;
+
+  // Update Weekly and Monthly Data (by domain)
+  weeklyData.timeData[domain] = (weeklyData.timeData[domain] || 0) + timeSpent;
+  monthlyData.timeData[domain] = (monthlyData.timeData[domain] || 0) + timeSpent;
+
+  // Save all updated data back to storage
+  await chrome.storage.local.set({
+    [todayKey]: dailyData,
+    [weekKey]: weeklyData,
+    [monthKey]: monthlyData,
+  });
+
+  // Reset start time for the current active tab
+  activeTabInfo.startTime = Date.now();
+};
+
+
+// --- Chrome Event Listeners ---
+
+chrome.runtime.onInstalled.addListener(() => {
+  console.log("Tab Tracker Extension Installed/Updated.");
+  initializePeriodData(getToday());
+  initializePeriodData(getThisWeek());
+  initializePeriodData(getThisMonth());
+});
+
+chrome.tabs.onCreated.addListener(async () => {
+  const keys = [getToday(), getThisWeek(), getThisMonth()];
+  const data = await chrome.storage.local.get(keys);
+  for (const key of keys) {
+    const periodData = data[key] || await initializePeriodData(key);
+    periodData.tabsOpened += 1;
+    await chrome.storage.local.set({ [key]: periodData });
+  }
+});
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  await updateTimeSpent(); // Final update before closing
+  const keys = [getToday(), getThisWeek(), getThisMonth()];
+  const data = await chrome.storage.local.get(keys);
+  for (const key of keys) {
+    const periodData = data[key] || await initializePeriodData(key);
+    periodData.tabsClosed += 1;
+    await chrome.storage.local.set({ [key]: periodData });
+  }
+  if (activeTabInfo.id === tabId) {
+    activeTabInfo = { id: null, startTime: null, url: null };
+  }
+});
+
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  await updateTimeSpent();
+  try {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    if (tab && tab.url && tab.url.startsWith('http')) {
+      activeTabInfo = { id: tab.id, startTime: Date.now(), url: tab.url };
+      // Also update the title in daily data
+      const todayKey = getToday();
+      const dailyData = await initializePeriodData(todayKey);
+      if (dailyData.timeData[tab.id]) {
+        dailyData.timeData[tab.id].title = tab.title;
+        await chrome.storage.local.set({[todayKey]: dailyData});
+      }
+    } else {
+      activeTabInfo = { id: null, startTime: null, url: null };
+    }
+  } catch (e) {
+    activeTabInfo = { id: null, startTime: null, url: null };
+  }
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (tabId === activeTabInfo.id && (changeInfo.url || changeInfo.title)) {
+    await updateTimeSpent();
+    activeTabInfo.url = tab.url; // Update URL for tracking
+    // Update URL and title in daily data
+    const todayKey = getToday();
+    const dailyData = await initializePeriodData(todayKey);
+    if (dailyData.timeData[tabId]) {
+      dailyData.timeData[tabId].url = tab.url;
+      dailyData.timeData[tabId].title = tab.title;
+      await chrome.storage.local.set({[todayKey]: dailyData});
+    }
+  }
+});
+
+chrome.windows.onFocusChanged.addListener(async (windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    await updateTimeSpent();
+    isIdle = true; // Treat loss of focus as idle
+  } else {
+    isIdle = false;
+    const [tab] = await chrome.tabs.query({ active: true, windowId: windowId });
+    if (tab) {
+        // This will trigger onActivated if the tab is different,
+        // but we should manually set the active tab here to be safe.
+        activeTabInfo = { id: tab.id, startTime: Date.now(), url: tab.url };
+    }
+  }
+});
+
+chrome.idle.onStateChanged.addListener(async (newState) => {
+  if (newState === "active") {
+    isIdle = false;
+    // User is active again, restart timer
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (tab) {
+        activeTabInfo = { id: tab.id, startTime: Date.now(), url: tab.url };
+    }
+  } else {
+    isIdle = true;
+    await updateTimeSpent();
+  }
+});
+3. Updated React App (src/App.js and src/App.css)
+The UI will now feature buttons to switch views and a chart to display the data.
+src/App.css (with new styles)
+Add these new styles and update existing ones in src/App.css.
+code
+Css
+body {
+  background-color: #f0f2f5;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  color: #1c1e21;
+  margin: 0;
+  padding: 20px;
+  min-width: 600px;
+}
+
+.App {
+  max-width: 900px;
+  margin: 20px auto;
+  padding: 20px;
+  background-color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.header {
+  border-bottom: 1px solid #dddfe2;
+  padding-bottom: 15px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header h1 {
+  font-size: 24px;
+  color: #050505;
+  margin: 0;
+}
+
+.view-switcher {
+  display: flex;
+  gap: 8px;
+}
+
+.view-switcher button {
+  padding: 8px 16px;
+  font-size: 14px;
+  border: 1px solid #ccc;
+  background-color: #f0f2f5;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.view-switcher button.active {
+  background-color: #1877f2;
+  color: white;
+  border-color: #1877f2;
+}
+
+.stats-container {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  margin: 20px 0;
+}
+
+.stat-box {
+  background-color: #e7f3ff;
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+}
+
+.stat-box h2 {
+  margin: 0 0 10px 0;
+  font-size: 18px;
+  color: #1877f2;
+}
+
+.stat-box p {
+  margin: 0;
+  font-size: 32px;
+  font-weight: bold;
+  color: #050505;
+}
+
+.data-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 30px;
+  margin-top: 20px;
+}
+
+.chart-container, .list-container {
+    padding: 20px;
+    border: 1px solid #dddfe2;
+    border-radius: 8px;
+}
+
+h2.container-title {
+    font-size: 20px;
+    font-weight: bold;
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #050505;
+}
+
+.tab-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.tab-item {
+  display: flex;
+  align-items: center;
+  padding: 12px 10px;
+  border-bottom: 1px solid #eee;
+}
+.tab-item:last-child { border-bottom: none; }
+
+.tab-rank {
+  font-size: 14px;
+  font-weight: bold;
+  color: #606770;
+  margin-right: 15px;
+  min-width: 20px;
+}
+
+.tab-info {
+  flex-grow: 1;
+  overflow: hidden;
+}
+
+.tab-info a, .tab-info span {
+  font-weight: 500;
+  color: #050505;
+  text-decoration: none;
+  font-size: 16px;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-info small {
+  color: #606770;
+  display: block;
+}
+
+.tab-time {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1877f2;
+  min-width: 80px;
+  text-align: right;
+}
+
+.no-data {
+  text-align: center;
+  padding: 40px;
+  color: #606770;
+}
+
+@media (max-width: 800px) {
+    .data-container {
+        grid-template-columns: 1fr;
+    }
+}
+src/App.js (Major Update)
+This component will now manage the different views (Daily, Weekly, Monthly) and render the chart.
+code
+JavaScript
+/*global chrome*/
+import React, { useState, useEffect } from 'react';
+import { Bar } from 'react-chartjs-2';
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
+import './App.css';
+
+// Register Chart.js components
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
+
+// --- Helper Functions ---
+const getToday = () => new Date().toISOString().split('T')[0];
+const getThisWeek = () => {
+  const now = new Date();
+  const firstDayOfYear = new Date(now.getFullYear(), 0, 1);
+  const pastDaysOfYear = (now - firstDayOfYear) / 86400000;
+  const weekNumber = Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+  return `${now.getFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
+};
+const getThisMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const formatTime = (ms) => {
+  if (!ms || ms < 1000) return "0s";
+  const totalSeconds = Math.floor(ms / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return [h > 0 ? `${h}h` : '', m > 0 ? `${m}m` : '', s > 0 ? `${s}s` : '']
+    .filter(Boolean).join(' ') || '0s';
+};
+
+function App() {
+  const [view, setView] = useState('Daily'); // Daily, Weekly, or Monthly
+  const [stats, setStats] = useState({ tabsOpened: 0, tabsClosed: 0 });
+  const [rankedData, setRankedData] = useState([]);
+  const [activeTabCount, setActiveTabCount] = useState(0);
+
+  useEffect(() => {
+    const fetchAndSetData = async () => {
+      let key;
+      if (view === 'Daily') key = getToday();
+      else if (view === 'Weekly') key = getThisWeek();
+      else key = getThisMonth();
+
+      // Fetch data from storage
+      chrome.storage.local.get(key, (result) => {
+        const periodData = result[key];
+        if (periodData) {
+          setStats({
+            tabsOpened: periodData.tabsOpened,
+            tabsClosed: periodData.tabsClosed,
+          });
+
+          // Process data for ranking and chart
+          let processedData;
+          if (view === 'Daily') {
+            // Daily data is by tabId, but we want to show it by URL
+            processedData = Object.values(periodData.timeData)
+                .filter(tab => tab.timeSpent > 500)
+                .map(tab => ({ ...tab, key: tab.url }));
+          } else {
+            // Weekly/Monthly data is by domain
+            processedData = Object.entries(periodData.timeData)
+                .filter(([domain, time]) => time > 500)
+                .map(([domain, time]) => ({ key: domain, url: `http://${domain}`, title: domain, timeSpent: time }));
+          }
+
+          const sortedData = processedData.sort((a, b) => b.timeSpent - a.timeSpent);
+          setRankedData(sortedData);
+        } else {
+            // No data for this period yet
+            setStats({ tabsOpened: 0, tabsClosed: 0 });
+            setRankedData([]);
+        }
+      });
+
+      // Get current active tab count
+      chrome.tabs.query({}, (tabs) => setActiveTabCount(tabs.length));
+    };
+    
+    fetchAndSetData();
+    
+    // Auto-update when storage changes
+    const storageListener = (changes, namespace) => {
+        if (namespace === 'local') {
+            fetchAndSetData();
+        }
+    };
+    chrome.storage.onChanged.addListener(storageListener);
+
+    return () => chrome.storage.onChanged.removeListener(storageListener);
+
+  }, [view]);
+
+  // --- Chart Data and Options ---
+  const chartData = {
+    labels: rankedData.slice(0, 7).map(item => item.title),
+    datasets: [{
+      label: 'Time Spent',
+      data: rankedData.slice(0, 7).map(item => item.timeSpent / 60000), // in minutes
+      backgroundColor: 'rgba(24, 119, 242, 0.6)',
+      borderColor: 'rgba(24, 119, 242, 1)',
+      borderWidth: 1,
+    }],
+  };
+  
+  const chartOptions = {
+    indexAxis: 'y',
+    responsive: true,
+    plugins: {
+      legend: { display: false },
+      title: { display: true, text: `Top Sites by Time Spent (in minutes)` },
+    },
+    scales: { x: { beginAtZero: true } }
+  };
+
+  return (
+    <div className="App">
+      <header className="header">
+        <h1>Tab Usage Dashboard</h1>
+        <div className="view-switcher">
+          <button onClick={() => setView('Daily')} className={view === 'Daily' ? 'active' : ''}>Daily</button>
+          <button onClick={() => setView('Weekly')} className={view === 'Weekly' ? 'active' : ''}>Weekly</button>
+          <button onClick={() => setView('Monthly')} className={view === 'Monthly' ? 'active' : ''}>Monthly</button>
+        </div>
+      </header>
+
+      <div className="stats-container">
+        <div className="stat-box"><h2>Tabs Opened</h2><p>{stats.tabsOpened}</p></div>
+        <div className="stat-box"><h2>Tabs Closed</h2><p>{stats.tabsClosed}</p></div>
+        <div className="stat-box"><h2>Currently Open</h2><p>{activeTabCount}</p></div>
+      </div>
+
+      <div className="data-container">
+        <div className="chart-container">
+          <h2 className="container-title">Activity Chart</h2>
+          {rankedData.length > 0 ? <Bar options={chartOptions} data={chartData} /> : <p className="no-data">Not enough data to display chart.</p>}
+        </div>
+        <div className="list-container">
+          <h2 className="container-title">{view === 'Daily' ? 'Time Spent Per Tab' : 'Time Spent Per Domain'}</h2>
+          {rankedData.length > 0 ? (
+            <ul className="tab-list">
+              {rankedData.map((item, index) => (
+                <li key={item.key + index} className="tab-item">
+                  <span className="tab-rank">{index + 1}</span>
+                  <div className="tab-info">
+                    {view === 'Daily' ? 
+                      <a href={item.url} target="_blank" rel="noopener noreferrer" title={item.title}>{item.title}</a> :
+                      <span>{item.title}</span>
+                    }
+                    <small>{item.key}</small>
+                  </div>
+                  <span className="tab-time">{formatTime(item.timeSpent)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="no-data">No activity tracked for this period.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;
+4. Build and Test the Updated Extension
+Build the App: Run the build command again to include the new code and dependencies.
+code
+Bash
+npm run build
+Reload the Extension in Chrome:
+Go back to chrome://extensions.
+Find your "Tab Usage Tracker" extension.
+Click the reload icon (the circular arrow).
+Open a new tab to see the updated dashboard. You should now see the "Daily," "Weekly," and "Monthly" buttons. The dashboard will show a chart on the left and the ranked list on the right.
+Now your extension is a much more powerful analytical tool, giving you insights into your browsing habits over different time frames with a clear, graphical representation of your most visited sites.
